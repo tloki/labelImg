@@ -4,8 +4,9 @@ try:
     from PyQt5.QtCore import *
     from PyQt5.QtWidgets import *
 except ImportError:
-    from PyQt4.QtGui import *
-    from PyQt4.QtCore import *
+    pass
+    # from PyQt4.QtGui import *
+    # from PyQt4.QtCore import *
 
 #from PyQt4.QtOpenGL import *
 
@@ -36,6 +37,9 @@ class Canvas(QWidget):
     def __init__(self, *args, **kwargs):
         super(Canvas, self).__init__(*args, **kwargs)
         # Initialise local state.
+
+        self.canvas_parent = kwargs['parent']
+
         self.mode = self.EDIT
         self.shapes = []
         self.current = None
@@ -101,15 +105,60 @@ class Canvas(QWidget):
     def selectedVertex(self):
         return self.hVertex is not None
 
+
+    def get_selection_dimensions(self):
+
+        first_point, second_point = self.line.points[0]
+
+        diff = second_point - first_point
+
+        dx = abs(int(round(diff.x())))
+        dy = abs(int(round(diff.y())))
+
+        return dx, dy
+
+
     def mouseMoveEvent(self, ev):
         """Update line with last point and current coordinates."""
         pos = self.transformPos(ev.pos())
 
         # Update coordinates in status bar if image is opened
         window = self.parent().window()
+
+        right_bottom_text = ""
+        x, y = pos.x(), pos.y()
+
         if window.filePath is not None:
-            self.parent().window().labelCoordinates.setText(
-                'X: %d; Y: %d' % (pos.x(), pos.y()))
+            if self.drawing() and not self.prevPoint.isNull():
+                right_bottom_text = '[selecting]\t'
+            elif self.drawing() and self.prevPoint.isNull() and len(self.line) == 2:
+                first_point, second_point = self.line.points
+                diff = second_point - first_point
+                dx = abs(int(round(diff.x())))
+                dy = abs(int(round(diff.y())))
+                right_bottom_text = '[drawing]\t[W: {:4d}, H: {:4d}]\t'.format(dx, dy)
+            elif self.drawing() and self.prevPoint.isNull() and not len(self.line) == 0:
+                right_bottom_text = "[drawing]\t"
+            elif self.selectedVertex():
+                first_point, second_point = self.hShape.points[0:3:2]
+                diff = second_point - first_point
+                dx = abs(int(round(diff.x())))
+                dy = abs(int(round(diff.y())))
+                right_bottom_text = '[selected vertex]\t[W: {:4d}, H: {:4d}]\t'.format(dx, dy)
+            elif self.canvas_parent.currentItem():
+                item = self.canvas_parent.currentItem()
+                shape = self.canvas_parent.itemsToShapes[item]
+                first_point, second_point = shape.points[0:3:2]
+                diff = second_point - first_point
+                dx = abs(int(round(diff.x())))
+                dy = abs(int(round(diff.y())))
+                right_bottom_text = '[selected bbox]\t[W: {:4d}, H: {:4d}]\t'.format(dx, dy)
+            else:
+                right_bottom_text = '[idling]\t'
+
+        right_bottom_text_appendix = "X: {:4d}; Y: {:4d}".format(int(round(x)), int(round(y)))
+        right_bottom_text += right_bottom_text_appendix
+        self.parent().window().labelCoordinates.setText(right_bottom_text)
 
         # Polygon drawing.
         if self.drawing():
@@ -130,6 +179,7 @@ class Canvas(QWidget):
 
                 if self.drawSquare:
                     initPos = self.current[0]
+                    print("init pos:", initPos)
                     minX = initPos.x()
                     minY = initPos.y()
                     min_size = min(abs(pos.x() - minX), abs(pos.y() - minY))
@@ -144,6 +194,8 @@ class Canvas(QWidget):
                 self.current.highlightClear()
             else:
                 self.prevPoint = pos
+            # print("position:", pos)
+            # print("line:", self.line.points)
             self.repaint()
             return
 
@@ -171,7 +223,7 @@ class Canvas(QWidget):
                 self.repaint()
             return
 
-        # Just hovering over the canvas, 2 posibilities:
+        # Just hovering over the canvas, 2 possibilities:
         # - Highlight shapes
         # - Highlight vertex
         # Update shape/vertex fill and tooltip value accordingly.
@@ -432,6 +484,7 @@ class Canvas(QWidget):
             self.boundedMoveShape(shape, point + offset)
 
     def paintEvent(self, event):
+        # return
         if not self.pixmap:
             return super(Canvas, self).paintEvent(event)
 
@@ -446,17 +499,22 @@ class Canvas(QWidget):
 
         p.drawPixmap(0, 0, self.pixmap)
         Shape.scale = self.scale
+
+        # drawn shapes
         for shape in self.shapes:
             if (shape.selected or not self._hideBackround) and self.isVisible(shape):
                 shape.fill = shape.selected or shape == self.hShape
                 shape.paint(p)
+
+        # not here
         if self.current:
             self.current.paint(p)
             self.line.paint(p)
+            # pass
         if self.selectedShapeCopy:
             self.selectedShapeCopy.paint(p)
 
-        # Paint rect
+        # Paint rect - while drawing (holding left mouse)
         if self.current is not None and len(self.line) == 2:
             leftTop = self.line[0]
             rightBottom = self.line[1]
@@ -468,7 +526,7 @@ class Canvas(QWidget):
             p.drawRect(leftTop.x(), leftTop.y(), rectWidth, rectHeight)
 
         if self.drawing() and not self.prevPoint.isNull() and not self.outOfPixmap(self.prevPoint):
-            p.setPen(QColor(0, 0, 0))
+            p.setPen(QColor(0, 255, 0))
             p.drawLine(self.prevPoint.x(), 0, self.prevPoint.x(), self.pixmap.height())
             p.drawLine(0, self.prevPoint.y(), self.pixmap.width(), self.prevPoint.y())
 
@@ -519,7 +577,6 @@ class Canvas(QWidget):
     def closeEnough(self, p1, p2):
         #d = distance(p1 - p2)
         #m = (p1-p2).manhattanLength()
-        # print "d %.2f, m %d, %.2f" % (d, m, d - m)
         return distance(p1 - p2) < self.epsilon
 
     def intersectionPoint(self, p1, p2):
@@ -609,7 +666,6 @@ class Canvas(QWidget):
     def keyPressEvent(self, ev):
         key = ev.key()
         if key == Qt.Key_Escape and self.current:
-            print('ESC press')
             self.current = None
             self.drawingPolygon.emit(False)
             self.update()
@@ -625,27 +681,22 @@ class Canvas(QWidget):
             self.moveOnePixel('Down')
 
     def moveOnePixel(self, direction):
-        # print(self.selectedShape.points)
         if direction == 'Left' and not self.moveOutOfBound(QPointF(-1.0, 0)):
-            # print("move Left one pixel")
             self.selectedShape.points[0] += QPointF(-1.0, 0)
             self.selectedShape.points[1] += QPointF(-1.0, 0)
             self.selectedShape.points[2] += QPointF(-1.0, 0)
             self.selectedShape.points[3] += QPointF(-1.0, 0)
         elif direction == 'Right' and not self.moveOutOfBound(QPointF(1.0, 0)):
-            # print("move Right one pixel")
             self.selectedShape.points[0] += QPointF(1.0, 0)
             self.selectedShape.points[1] += QPointF(1.0, 0)
             self.selectedShape.points[2] += QPointF(1.0, 0)
             self.selectedShape.points[3] += QPointF(1.0, 0)
         elif direction == 'Up' and not self.moveOutOfBound(QPointF(0, -1.0)):
-            # print("move Up one pixel")
             self.selectedShape.points[0] += QPointF(0, -1.0)
             self.selectedShape.points[1] += QPointF(0, -1.0)
             self.selectedShape.points[2] += QPointF(0, -1.0)
             self.selectedShape.points[3] += QPointF(0, -1.0)
         elif direction == 'Down' and not self.moveOutOfBound(QPointF(0, 1.0)):
-            # print("move Down one pixel")
             self.selectedShape.points[0] += QPointF(0, 1.0)
             self.selectedShape.points[1] += QPointF(0, 1.0)
             self.selectedShape.points[2] += QPointF(0, 1.0)
